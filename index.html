@@ -150,6 +150,19 @@
 #net-msg button{font-size:20px;padding:12px 24px;border-radius:12px;border:none;background:#f1c40f;font-weight:bold;cursor:pointer}
 #game-over{color:#ff7675!important}#respawn-btn:disabled{opacity:.5}
 @media (max-width:600px){#q-skill-box{display:none!important}}
+
+#net-debug{font-size:11px;color:#9aa;min-height:14px;font-family:monospace;word-break:break-all;max-width:92vw}
+#room-net{display:none;color:#ff7675;font-size:12px;margin-top:4px}#room-tip{color:#b2bec3;font-size:11px;margin-top:4px;font-weight:normal}#room-debug{color:#889;font-size:10px;margin-top:2px;font-weight:normal;font-family:monospace;word-break:break-all}
+#net-lobby{overflow-y:auto;justify-content:flex-start}#net-lobby h1{margin-top:8px}
+#room-list-head{font-weight:bold;font-size:17px;text-align:left}#room-list-status{font-size:12px;color:#b2bec3;font-weight:normal}
+#room-list{display:flex;flex-direction:column;gap:6px;max-height:34vh;overflow-y:auto}
+#net-lobby .room-item{display:flex;justify-content:space-between;align-items:center;gap:8px;background:#0984e3;font-size:16px;padding:10px 12px;text-align:left}
+#net-lobby .room-item .rn{font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}#net-lobby .room-item .rh{font-size:12px;opacity:.85;font-weight:normal}
+#net-lobby .room-item.full{background:#636e72;opacity:.6;cursor:not-allowed}
+.room-empty{font-size:13px;color:#b2bec3;padding:6px}
+#net-lobby label.chk{font-size:14px;font-weight:normal;display:flex;align-items:center;gap:8px;justify-content:center}#net-lobby label.chk input{width:20px;height:20px}
+#net-lobby .card.small .row{display:flex;gap:8px}#net-lobby .card.small .row input{flex:1;min-width:0;font-size:18px;padding:8px}#net-lobby .card.small .row button{font-size:16px;padding:8px 12px;background:#6c5ce7}
+#room-name{font-size:18px!important}
 </style></head>
 <body>
     <div id="net-lobby">
@@ -160,21 +173,30 @@
             <input id="nick-input" maxlength="10" placeholder="아이디를 적어요" autocomplete="off">
         </div>
         <div class="card">
-            <button id="btn-create">🏠 방 만들기</button>
-            <div style="font-size:13px;color:#dfe6e9">방을 만들면 나오는 코드를 친구에게 알려 주세요</div>
+            <div id="room-list-head">🎮 지금 열린 방 <span id="room-list-status"></span></div>
+            <div id="room-list"></div>
         </div>
         <div class="card">
-            <input id="code-input" maxlength="5" placeholder="방 코드" autocomplete="off">
-            <button id="btn-join">🚪 방 들어가기</button>
+            <input id="room-name" maxlength="16" placeholder="방 이름" autocomplete="off">
+            <label class="chk"><input type="checkbox" id="room-private"> 친구만 (목록에 안 보이기)</label>
+            <button id="btn-create">🏠 방 만들기</button>
+        </div>
+        <div class="card small">
+            <div style="font-size:13px;color:#dfe6e9">🔒 친구만 방은 방 코드로 들어가요</div>
+            <div class="row"><input id="code-input" maxlength="5" placeholder="방 코드" autocomplete="off"><button id="btn-join">🚪 들어가기</button></div>
         </div>
         <button id="btn-solo">🙋 혼자 하기</button>
         <div id="lobby-status"></div>
+        <div id="net-debug"></div>
     </div>
     <div id="room-hud" class="no-attack">
         <div id="room-code-box" title="눌러서 복사">🔑 방 코드 <span id="room-code"></span></div>
         <div>👥 <span id="room-count">1/8</span></div>
         <div id="room-names"></div>
         <div id="room-wait"></div>
+        <div id="room-net"></div>
+        <div id="room-tip">📱 방장은 이 화면을 켜 둬야 친구가 들어와요</div>
+        <div id="room-debug"></div>
     </div>
     <div id="q-skill-box" class="no-attack"><div id="q-cd-fill"></div><div class="qk">Q</div><div class="qn">검기</div><div id="q-cd-txt">준비!</div></div>
     <div id="net-msg"><div id="net-msg-txt"></div><button onclick="location.reload()">처음으로</button></div>
@@ -301,10 +323,29 @@ const NET = (() => {
   };
   Object.defineProperty(N, 'isHost', { get: () => N.mode !== 'client' });
   Object.defineProperty(N, 'isClient', { get: () => N.mode === 'client' });
+  // 연결 길 찾기 서버: 여러 STUN + PeerJS 기본 무료 TURN(UDP/TCP/TLS 443). 방장과 친구 모두 같은 설정.
+  const TURN = { username: 'peerjs', credential: 'peerjsp' };
+  const PEER_OPTS = { debug: 1, config: { sdpSemantics: 'unified-plan', iceServers: [
+    { urls: ['stun:stun.l.google.com:19302', 'stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] },
+    { urls: ['stun:stun3.l.google.com:19302', 'stun:stun4.l.google.com:19302', 'stun:stun.cloudflare.com:3478'] },
+    Object.assign({ urls: ['turn:eu-0.turn.peerjs.com:3478', 'turn:us-0.turn.peerjs.com:3478'] }, TURN),
+    Object.assign({ urls: ['turn:eu-0.turn.peerjs.com:3478?transport=tcp', 'turn:us-0.turn.peerjs.com:3478?transport=tcp'] }, TURN),
+    Object.assign({ urls: ['turns:eu-0.turn.peerjs.com:443?transport=tcp', 'turns:us-0.turn.peerjs.com:443?transport=tcp'] }, TURN)
+  ] } };
+  N.PEER_OPTS = PEER_OPTS;
   const $ = id => document.getElementById(id);
+  // 작은 회색 진단 줄 (화면 캡처해서 보내면 원인을 알 수 있게)
+  const dbg = {};
+  function debugLine(o) {
+    Object.assign(dbg, o);
+    const t = Object.entries(dbg).filter(([, v]) => v !== '' && v != null).map(([k, v]) => k + ':' + v).join(' · ');
+    ['net-debug', 'room-debug'].forEach(id => { const e = $(id); if (e) e.innerText = t; });
+  }
+  N.debugLine = debugLine;
   const send = (conn, obj) => { try { if (conn && conn.open) conn.send(obj); } catch (e) { console.warn('send fail', e); } };
   const cleanNick = s => String(s || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 10);
   const genCode = () => { let s = ''; for (let i = 0; i < 5; i++) s += ALPHA[Math.floor(Math.random() * ALPHA.length)]; return s; };
+  const cleanNick16 = s => String(s || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, 16);
   const num = v => (typeof v === 'number' && isFinite(v)) ? v : 0;
 
   // ---------- 키 이름 맞추기 (한글 입력 상태에서도 Q/W/A/S/D가 되게) ----------
@@ -433,6 +474,7 @@ const NET = (() => {
     updateHud();
   }
   function acceptConn(conn) {
+    N.inTries = (N.inTries || 0) + 1; N.lastIn = conn; debugLine({ 들어옴: N.inTries });
     conn.on('data', m => { const c = N.conns.get(conn.peer); if (c) onHostMsg(c, m); });
     conn.on('open', () => {
       if (N.conns.size >= MAX - 1) { send(conn, { t: 'full' }); setTimeout(() => { try { conn.close(); } catch (e) {} }, 800); return; }
@@ -569,6 +611,7 @@ const NET = (() => {
   // ---------- 방장 나감 ----------
   function hostLost(msg) {
     if (N.ended) return; N.ended = true;
+    if (typeof ROOMS !== 'undefined') ROOMS.stopAnnounce();
     try { stopAttack(); } catch (e) {}
     $('net-msg-txt').innerText = msg; $('net-msg').style.display = 'flex';
     try { N.peer && N.peer.destroy(); } catch (e) {}
@@ -586,6 +629,7 @@ const NET = (() => {
     const key = N.code + names.join('|') + wait;
     if (key === hudKey) return; hudKey = key;
     $('room-code').innerText = N.code; $('room-count').innerText = `${names.length}/${MAX}`;
+    if (N.isHost && typeof ROOMS !== 'undefined') ROOMS.setCount(names.length);
     $('room-names').innerText = names.join('\n'); $('room-wait').innerText = wait;
   }
   N.updateHud = updateHud;
@@ -607,6 +651,7 @@ const NET = (() => {
   }
   function ready() {
     $('net-lobby').style.display = 'none';
+    if (typeof ROOMS !== 'undefined') ROOMS.unwatch();
     if (N.mode !== 'solo') { $('room-hud').style.display = 'block'; hudKey = ''; updateHud(); }
     $('pNameUI').innerText = '';
   }
@@ -614,14 +659,17 @@ const NET = (() => {
   N.createRoom = () => {
     if (!getNick() || !needPeer()) return;
     busy(true); status('방을 만드는 중이에요…');
+    const roomName = cleanNick16($('room-name').value) || (N.nick + '의 방'), priv = $('room-private').checked;
+    const announce = () => { if (!priv && typeof ROOMS !== 'undefined') ROOMS.announce({ code: N.code, name: roomName, nick: N.nick, count: 1 }); };
     const tryOpen = attempt => {
       const code = genCode();
-      const peer = new Peer(PREFIX + code.toLowerCase(), { debug: 1 });
+      const peer = new Peer(PREFIX + code.toLowerCase(), PEER_OPTS);
       let opened = false;
-      peer.on('open', () => { opened = true; N.peer = peer; N.mode = 'host'; N.code = code; N.myId = 'h'; ready(); });
+      peer.on('open', () => { if (!opened) { opened = true; N.peer = peer; N.mode = 'host'; N.code = code; N.myId = 'h'; ready(); hostWatch(peer); announce(); } else debugLine({ 서버: '다시 연결됨' }); });
       peer.on('connection', acceptConn);
-      peer.on('disconnected', () => { if (!N.ended && opened) setTimeout(() => { try { if (!peer.destroyed) peer.reconnect(); } catch (e) {} }, 2000); });
+      peer.on('disconnected', () => { debugLine({ 서버: '끊김' }); if (opened) hostReconnect(peer); });
       peer.on('error', err => {
+        debugLine({ 오류: err.type });
         if (!opened) {
           try { peer.destroy(); } catch (e) {}
           if (err.type === 'unavailable-id' && attempt < 5) tryOpen(attempt + 1);
@@ -631,27 +679,109 @@ const NET = (() => {
     };
     tryOpen(0);
   };
-  N.joinRoom = () => {
+  // 방장: 신호 서버 연결이 끊기면 점점 길게 기다리며 다시 이어요 (2초, 4초, 8초 … 최대 30초)
+  let rcDelay = 2000, rcTimer = 0;
+  function hostReconnect(peer) {
+    if (N.ended || peer.destroyed || !peer.disconnected || rcTimer) return;
+    rcTimer = setTimeout(() => {
+      rcTimer = 0;
+      if (N.ended || peer.destroyed || !peer.disconnected) return;
+      debugLine({ 서버: '다시 잇는 중' });
+      try { peer.reconnect(); } catch (e) { console.warn('reconnect', e); }
+      rcDelay = Math.min(30000, rcDelay * 2);
+      setTimeout(() => hostReconnect(peer), 1500); // 실패하면 다음 시도 예약
+    }, rcDelay);
+  }
+  function hostWatch(peer) {
+    const now = () => { if (!peer.disconnected) return; rcDelay = 1000; clearTimeout(rcTimer); rcTimer = 0; hostReconnect(peer); };
+    document.addEventListener('visibilitychange', () => { if (!document.hidden) now(); });
+    window.addEventListener('online', now);
+    setInterval(() => {
+      const down = !N.ended && !peer.destroyed && peer.disconnected;
+      if (!down) rcDelay = 2000; else hostReconnect(peer);
+      const w = $('room-net'); if (w) { w.innerText = down ? '⚠️ 서버 연결이 끊겨서 다시 잇는 중이에요. 지금은 친구가 못 들어와요.' : ''; w.style.display = down ? 'block' : 'none'; }
+      const pc = N.lastIn && N.lastIn.peerConnection;
+      debugLine({ 서버: down ? '끊김' : '연결됨', ice: pc ? pc.iceConnectionState : '' });
+    }, 1000);
+  }
+  N.joinRoom = codeArg => {
     if (!getNick() || !needPeer()) return;
-    const code = String($('code-input').value || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+    const code = String((typeof codeArg === 'string' ? codeArg : $('code-input').value) || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
     if (code.length !== 5) { status('방 코드 5글자를 적어 주세요!', true); return; }
-    busy(true); status('방에 들어가는 중이에요…');
-    const peer = new Peer({ debug: 1 }); N.peer = peer;
-    let done = false;
-    const fail = msg => { if (done) return; done = true; clearTimeout(to); busy(false); status(msg, true); try { peer.destroy(); } catch (e) {} N.peer = null; N.hostConn = null; };
-    const to = setTimeout(() => fail('방을 찾지 못했어요. 방 코드를 다시 확인해 주세요.'), 20000);
+    busy(true); status('서버에 연결하는 중이에요…');
+    const peer = new Peer(PEER_OPTS); N.peer = peer;
+    let done = false, tries = 0, conn = null, reached = false, iceSeen = '', tryTimer = 0, poll = 0;
+    debugLine({ 시도: 0, ice: '', 신호: '', 오류: '' });
+    const fail = msg => {
+      if (done) return; done = true; clearTimeout(to); clearTimeout(tryTimer); clearInterval(poll); busy(false); status(msg, true);
+      try { peer.destroy(); } catch (e) {} N.peer = null; N.hostConn = null;
+    };
+    const blocked = () => '방은 찾았는데 연결이 막혔어요. 같은 와이파이에서 해 보거나 다시 눌러 주세요.';
+    const noAnswer = () => '방장 화면이 응답하지 않아요. 방장이 게임 화면을 켜 두었는지 확인하고 다시 눌러 주세요.';
+    const to = setTimeout(() => fail(reached ? blocked() : noAnswer()), 25000);
     N._fail = fail;
-    N._joined = () => { if (done) return; done = true; clearTimeout(to); N.code = code; ready(); };
-    peer.on('open', () => {
-      const conn = peer.connect(PREFIX + code.toLowerCase(), { reliable: true, serialization: 'json', metadata: { nick: N.nick } });
-      N.hostConn = conn;
-      conn.on('data', onClientMsg);
-      conn.on('close', () => { if (done && N.mode === 'client') hostLost('방장이 나가서 방이 끝났어요.'); else fail('방에 들어가지 못했어요.'); });
-      conn.on('error', e => console.warn('conn error', e));
-    });
-    peer.on('error', err => { if (!done) fail(errMsg(err)); else console.warn('peer error', err.type); });
+    N._joined = () => { if (done) return; done = true; clearTimeout(to); clearTimeout(tryTimer); clearInterval(poll); N.code = code; ready(); };
+    const attempt = () => {
+      tries++; debugLine({ 시도: tries });
+      if (conn) { conn._old = true; try { conn.close(); } catch (e) {} }
+      const c = conn = peer.connect(PREFIX + code.toLowerCase(), { reliable: true, serialization: 'json', metadata: { nick: N.nick } });
+      N.hostConn = c;
+      status(tries > 1 ? '다시 연결해 보는 중이에요… (2번째)' : '방장 찾는 중이에요…');
+      c.on('data', m => { if (!c._old) onClientMsg(m); });
+      c.on('open', () => { if (!c._old) status('연결됐어요! 들어가는 중…'); });
+      c.on('close', () => {
+        if (c._old) return;
+        if (done && N.mode === 'client') hostLost('방장이 나가서 방이 끝났어요.');
+        else retryOrFail();
+      });
+      c.on('error', e => { console.warn('conn error', e); debugLine({ 오류: e && e.type }); });
+      // 1번째 시도에서 12초 동안 방장 답이 없으면 한 번 더 보내 봐요 (방장 화면이 잠깐 꺼졌다 켜졌을 때)
+      clearTimeout(tryTimer);
+      if (tries === 1) tryTimer = setTimeout(() => { if (!done && !reached) attempt(); }, 12000);
+    };
+    const retryOrFail = () => { if (done) return; if (tries < 2) attempt(); else fail(reached ? blocked() : '방에 들어가지 못했어요. 다시 눌러 주세요.'); };
+    poll = setInterval(() => {
+      const pc = conn && conn.peerConnection; if (!pc || done) return;
+      const ice = pc.iceConnectionState, sig = pc.signalingState;
+      if (!reached && pc.remoteDescription && sig === 'stable') { reached = true; status('방장을 찾았어요! 연결 중이에요…'); }
+      debugLine({ 신호: sig, ice });
+      if (ice !== iceSeen) { iceSeen = ice; if (ice === 'failed' && reached) retryOrFail(); }
+    }, 300);
+    peer.on('open', () => { status('서버 연결됨! 방장 찾는 중이에요…'); debugLine({ 서버: '연결됨' }); attempt(); });
+    peer.on('error', err => { debugLine({ 오류: err.type }); if (!done) fail(errMsg(err)); else console.warn('peer error', err.type); });
   };
   N.solo = () => { if (!getNick()) return; N.mode = 'solo'; ready(); };
+
+  // ---------- 열린 방 목록 ----------
+  function roomList() {
+    if (typeof ROOMS === 'undefined') return;
+    const nameIn = $('room-name'), nickIn = $('nick-input');
+    const ph = () => { nameIn.placeholder = (cleanNick(nickIn.value) || '나') + '의 방'; };
+    nickIn.addEventListener('input', ph); ph();
+    let key = '';
+    const render = () => {
+      if ($('net-lobby').style.display === 'none') return;
+      const rooms = ROOMS.rooms(), box = $('room-list');
+      $('room-list-status').innerText = ROOMS.connected() ? '· 자동으로 새로 고쳐져요' : '· 목록 서버에 연결 중…';
+      const k = rooms.map(r => r.code + r.name + r.host + r.c).join('|') + (rooms.length ? '' : ROOMS.connected());
+      if (k === key) return; key = k;
+      box.textContent = '';
+      if (!rooms.length) { const e = document.createElement('div'); e.className = 'room-empty'; e.innerText = ROOMS.connected() ? '아직 열린 방이 없어요. 방을 만들어 보세요!' : '방 목록을 불러오는 중이에요…'; box.appendChild(e); return; }
+      for (const r of rooms) {
+        const b = document.createElement('button'); const full = r.c >= MAX;
+        b.className = 'room-item' + (full ? ' full' : ''); b.dataset.code = r.code;
+        const l = document.createElement('div'); l.style.minWidth = '0';
+        const n = document.createElement('div'); n.className = 'rn'; n.textContent = r.name;
+        const h = document.createElement('div'); h.className = 'rh'; h.textContent = '👑 ' + r.host;
+        l.append(n, h);
+        const c = document.createElement('div'); c.textContent = full ? `꽉 참 ${r.c}/${MAX}` : `👥 ${r.c}/${MAX}`;
+        b.append(l, c);
+        if (full) b.disabled = true; else b.onclick = () => N.joinRoom(r.code);
+        box.appendChild(b);
+      }
+    };
+    ROOMS.onChange = render; ROOMS.watch(); render(); setInterval(render, 1500);
+  }
 
   // ---------- 매 화면마다 ----------
   let prevT = 0;
@@ -670,7 +800,8 @@ const NET = (() => {
   }
   window.addEventListener('load', () => {
     $('nick-input').value = localStorage.getItem('taerimZombieNick') || '';
-    $('btn-create').onclick = N.createRoom; $('btn-join').onclick = N.joinRoom; $('btn-solo').onclick = N.solo;
+    $('btn-create').onclick = N.createRoom; $('btn-join').onclick = () => N.joinRoom();
+    roomList(); $('btn-solo').onclick = N.solo;
     $('code-input').addEventListener('keydown', e => { if (e.key === 'Enter') N.joinRoom(); });
     $('room-code-box').onclick = () => { try { navigator.clipboard.writeText(N.code); showNotify('📋 방 코드를 복사했어요!'); } catch (e) {} };
     const qb = $('btn-q');
@@ -747,6 +878,96 @@ function updateQUI() {
     qb.innerText = left > 0 ? (left / 1000).toFixed(1) : 'Q';
   } else qb.innerText = 'Q';
 }
+
+// ===== 열린 방 목록 =====
+// 가입 없는 무료 공개 MQTT 서버 두 곳에 "방 이름 · 방장 아이디 · 인원"만 올려요. (채팅·위치 같은 건 절대 안 올려요)
+// 방장은 8초마다 다시 알리고, 창을 닫으면 서버가 방을 지워요(유언 메시지). 25초 넘게 소식이 없으면 목록에서 빠져요.
+const ROOMS = (() => {
+  const TOPIC = 'taerimzombie/v1/rooms/';
+  const qp = new URLSearchParams(location.search).get('mqtt'); // 시험용
+  const BROKERS = qp ? qp.split(',') : ['wss://broker.hivemq.com:8884/mqtt', 'wss://broker.emqx.io:8084/mqtt'];
+  const BEAT_MS = 8000, STALE_MS = 25000;
+  const enc = new TextEncoder(), dec = new TextDecoder();
+  const u16 = n => [n >> 8 & 255, n & 255];
+  const str = s => { const b = enc.encode(s); return [...u16(b.length), ...b]; };
+  const pkt = (h, body) => { const out = [h]; let n = body.length; do { let d = n % 128; n = Math.floor(n / 128); if (n) d |= 128; out.push(d); } while (n); return new Uint8Array([...out, ...body]); };
+
+  // 아주 작은 MQTT 3.1.1 클라이언트 (QoS 0만)
+  class Mini {
+    constructor(url) { this.url = url; this.ok = false; this.subs = []; this.will = null; this.onMsg = null; this.delay = 2000; this.buf = new Uint8Array(0); this.dead = false; this.open(); }
+    open() {
+      if (this.dead) return;
+      let ws; try { ws = new WebSocket(this.url, ['mqtt']); } catch (e) { return this.retry(); }
+      this.ws = ws; ws.binaryType = 'arraybuffer'; this.buf = new Uint8Array(0);
+      ws.onopen = () => {
+        const id = 'tz' + Math.random().toString(36).slice(2, 12);
+        let flags = 0x02, pay = str(id);
+        if (this.will) { flags |= 0x04 | 0x20; pay = pay.concat(str(this.will[0]), u16(this.will[1].length), [...this.will[1]]); }
+        ws.send(pkt(0x10, [...str('MQTT'), 4, flags, ...u16(30), ...pay]));
+      };
+      ws.onmessage = e => { const a = new Uint8Array(e.data), b = new Uint8Array(this.buf.length + a.length); b.set(this.buf); b.set(a, this.buf.length); this.buf = b; this.parse(); };
+      ws.onclose = () => { this.ok = false; clearInterval(this.ping); this.retry(); };
+      ws.onerror = () => {};
+    }
+    retry() { if (this.dead) return; clearTimeout(this.rt); this.rt = setTimeout(() => this.open(), this.delay); this.delay = Math.min(30000, this.delay * 2); }
+    parse() {
+      for (;;) {
+        const b = this.buf; if (b.length < 2) return;
+        let len = 0, mul = 1, i = 1, d;
+        do { if (i >= b.length) return; d = b[i++]; len += (d & 127) * mul; mul *= 128; } while (d & 128 && i < 5);
+        if (b.length < i + len) return;
+        const type = b[0] >> 4, flags = b[0] & 15, body = b.subarray(i, i + len); this.buf = b.slice(i + len);
+        if (type === 2) { if (body[1] === 0) { this.ok = true; this.delay = 2000; this.subs.forEach(t => this.sub(t, true)); this.ping = setInterval(() => this.raw(new Uint8Array([0xc0, 0])), 20000); this.onUp && this.onUp(); } else this.ws.close(); }
+        else if (type === 3) {
+          const tl = body[0] << 8 | body[1]; const topic = dec.decode(body.subarray(2, 2 + tl)); let p = 2 + tl;
+          if ((flags >> 1) & 3) p += 2;
+          try { this.onMsg && this.onMsg(topic, dec.decode(body.subarray(p)), !!(flags & 1)); } catch (e) { console.warn('room msg', e); }
+        }
+      }
+    }
+    raw(u) { try { if (this.ws && this.ws.readyState === 1) this.ws.send(u); } catch (e) {} }
+    sub(t, again) { if (!again) this.subs.push(t); if (this.ok) this.raw(pkt(0x82, [...u16(1 + Math.floor(Math.random() * 60000)), ...str(t), 0])); }
+    pub(t, s, retain) { if (this.ok) this.raw(pkt(0x30 | (retain ? 1 : 0), [...str(t), ...enc.encode(s)])); }
+    close() { this.dead = true; clearInterval(this.ping); clearTimeout(this.rt); this.raw(new Uint8Array([0xe0, 0])); try { this.ws && this.ws.close(); } catch (e) {} }
+  }
+
+  const R = { list: new Map(), watchers: [], host: null, onChange: null };
+  const clean = (s, n) => String(s || '').replace(/[\u0000-\u001f<>]/g, '').trim().slice(0, n);
+  function onMsg(topic, s, retained) {
+    const code = topic.slice(TOPIC.length);
+    if (!/^[A-Z2-9]{5}$/.test(code)) return;
+    if (!s) { if (R.list.delete(code)) R.onChange && R.onChange(); return; }
+    let m; try { m = JSON.parse(s); } catch (e) { return; }
+    const t = Number(m.t) || 0, now = Date.now();
+    // 서버에 남아 있던 옛 소식은 최근 것(30초 안)만 믿어요
+    if (retained && Math.abs(now - t) > 30000) return;
+    const room = { code, name: clean(m.n, 16) || '이름 없는 방', host: clean(m.h, 10) || '?', c: Math.max(1, Math.min(8, Math.floor(Number(m.c) || 1))), seen: now };
+    R.list.set(code, room); R.onChange && R.onChange();
+  }
+  // 목록 보기 시작/끝
+  R.watch = () => {
+    if (R.watchers.length) return;
+    R.watchers = BROKERS.map(u => { const c = new Mini(u); c.onMsg = onMsg; c.sub(TOPIC + '+'); return c; });
+    R.sweep = setInterval(() => { const now = Date.now(); let ch = false; for (const [k, r] of R.list) if (now - r.seen > STALE_MS) { R.list.delete(k); ch = true; } if (ch && R.onChange) R.onChange(); }, 2000);
+  };
+  R.unwatch = () => { R.watchers.forEach(c => c.close()); R.watchers = []; clearInterval(R.sweep); R.list.clear(); };
+  R.connected = () => R.watchers.some(c => c.ok);
+  R.rooms = () => [...R.list.values()].sort((a, b) => (a.c >= 8) - (b.c >= 8) || b.seen - a.seen).slice(0, 30);
+  // 방장: 방 알리기
+  R.announce = info => {
+    R.stopAnnounce();
+    const topic = TOPIC + info.code; const h = { info, topic, cs: [] };
+    const msg = () => JSON.stringify({ n: info.name, h: info.nick, c: info.count || 1, t: Date.now() });
+    h.beat = () => h.cs.forEach(c => c.pub(topic, msg(), true));
+    h.cs = BROKERS.map(u => { const c = new Mini(u); c.will = [topic, new Uint8Array(0)]; c.onUp = () => c.pub(topic, msg(), true); return c; });
+    h.timer = setInterval(h.beat, BEAT_MS);
+    R.host = h;
+  };
+  R.setCount = n => { if (R.host && R.host.info.count !== n) { R.host.info.count = n; R.host.beat(); } };
+  R.stopAnnounce = () => { const h = R.host; if (!h) return; R.host = null; clearInterval(h.timer); h.cs.forEach(c => { c.pub(h.topic, '', true); c.close(); }); };
+  window.addEventListener('pagehide', () => R.stopAnnounce());
+  return R;
+})();
 
 </script>
 
